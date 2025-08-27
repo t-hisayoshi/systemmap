@@ -137,8 +137,22 @@ for i, e in enumerate(st.session_state.arrows):
         del_row("arrow", i); st.rerun()
 
 st.markdown("---")
-if st.button("描画する", type="primary"):
-    dot = render_graph(rankdir, font, actor_color, system_color, system_header, data_bg, emph_bg, edge_color)
-    st.graphviz_chart(dot.source, use_container_width=True)
-    st.download_button("SVGをダウンロード", dot.pipe(format="svg"),
-                       file_name="system_map.svg", mime="image/svg+xml")
+c1, c2 = st.columns([1,1])
+
+with c1:
+    if st.button("描画する", type="primary", use_container_width=True):
+        dot = render_graph(rankdir, font, actor_color, system_color, system_header, data_bg, emph_bg, edge_color)
+        st.graphviz_chart(dot.source, use_container_width=True)
+        try:
+            svg_bytes = dot.pipe(format="svg")
+            st.download_button("SVGをダウンロード", svg_bytes,
+                               file_name="system_map.svg", mime="image/svg+xml")
+        except Exception:
+            pass
+
+with c2:
+    if st.button("すべてクリア", use_container_width=True):
+        st.session_state.actors = []
+        st.session_state.systems = []
+        st.session_state.arrows = []
+        st.rerun()
