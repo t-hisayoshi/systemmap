@@ -1,8 +1,9 @@
 import streamlit as st
 from graphviz import Digraph
+import csv, io
 
 st.set_page_config(page_title="System Map Builder", layout="wide")
-st.title("System Map Builder")
+st.title("System Map Builder（行ごとの入力 + 矢印のプルダウン + CSV入出力）")
 
 # -------- Helpers --------
 def ensure_state():
@@ -52,7 +53,8 @@ def build_system_label(sys, header_bg, data_bg, emph_bg):
     items = [i.strip() for i in raw.split(",")] if raw else []
     rows = []
     for item in items:
-        if not item: continue
+        if not item: 
+            continue
         emph = item.startswith("*") or item.startswith("＊")
         label = item[1:].strip() if emph else item
         bg = emph_bg if emph else data_bg
@@ -91,6 +93,29 @@ def render_graph(rankdir, font, actor_color, system_color, system_header, data_b
             dot.edge(frm, to, label=text)
     return dot
 
+# ---- CSV utils ----
+def bytes_csv(rows, headers):
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=headers)
+    writer.writeheader()
+    for r in rows:
+        writer.writerow({k: r.get(k, "") for k in headers})
+    # Excel配慮で UTF-8 BOM 付き
+    return ("\ufeff" + buf.getvalue()).encode("utf-8-sig")
+
+def import_csv(file, required_headers):
+    try:
+        text = file.read().decode("utf-8-sig")
+    except Exception:
+        text = file.read().decode("utf-8")
+    buf = io.StringIO(text)
+    reader = csv.DictReader(buf)
+    miss = [h for h in required_headers if h not in reader.fieldnames]
+    if miss:
+        st.error(f"CSVヘッダが不足：{miss}（必要：{required_headers}）")
+        return None
+    return list(reader)
+
 # -------- サイドバー（折り畳み可能） --------
 with st.sidebar.expander("⚙️ オプション", expanded=False):
     rankdir = st.selectbox("レイアウト方向", ["LR","TB","BT","RL"], 0)
@@ -105,16 +130,58 @@ with st.sidebar.expander("⚙️ オプション", expanded=False):
 # -------- UI --------
 ensure_state()
 
+# === Actors ===
 st.subheader("Actors")
-if st.button("add", key="add_actor"): add_row("actor")
+top_cols = st.columns([1,1,3,3,3])
+if top_cols[0].button("Add", key="add_actor"): add_row("actor")
+# Export
+actors_csv = bytes_csv(st.session_state.actors, headers=["name"])
+top_cols[1].download_button("Export CSV", actors_csv, file_name="actors.csv", mime="text/csv", use_container_width=True)
+# Import
+with top_cols[2]:
+    up_actors = st.file_uploader("Actors CSV Import", type=["csv"], key="up_actors")
+with top_cols[3]:
+    if st.button("インポート（Actors）", use_container_width=True):
+        if up_actors:
+            rows = import_csv(up_actors, ["name"])
+            if rows is not None:
+                st.session_state.actors = [{"name": r.get("name","")} for r in rows]
+                st.success("Actorsをインポートしました。"); st.rerun()
+        else:
+            st.warning("CSVファイルを選択してください。")
+
 for i, a in enumerate(st.session_state.actors):
     c1, c2 = st.columns([8,1])
     a["name"] = c1.text_input(f"Actor {i+1}", value=a["name"], key=f"actor_{i}")
     if c2.button("×", key=f"del_actor_{i}"):
         del_row("actor", i); st.rerun()
 
-st.subheader("Systems (dataの頭に*/＊をつけると強調表示されます)")
-if st.button("add", key="add_system"): add_row("system")
+st.markdown("---")
+
+# === Systems ===
+st.subheader("Systems")
+sys_top = st.columns([1,1,3,3,3])
+if sys_top[0].button("Add", key="add_system"): add_row("system")
+# Export
+systems_csv = bytes_csv(st.session_state.systems, headers=["name","description","data"])
+sys_top[1].download_button("Export CSV", systems_csv, file_name="systems.csv", mime="text/csv", use_container_width=True)
+# Import
+with sys_top[2]:
+    up_systems = st.file_uploader("Systems CSV Import", type=["csv"], key="up_systems")
+with sys_top[3]:
+    if st.button("インポート（Systems）", use_container_width=True):
+        if up_systems:
+            rows = import_csv(up_systems, ["name","description","data"])
+            if rows is not None:
+                st.session_state.systems = [
+                    {"name": r.get("name",""), "description": r.get("description",""), "data": r.get("data","")}
+                    for r in rows
+                ]
+                st.success("Systemsをインポートしました。"); st.rerun()
+        else:
+            st.warning("CSVファイルを選択してください。")
+
+# rows
 for i, s in enumerate(st.session_state.systems):
     c1, c2, c3, c4 = st.columns([4,4,4,1])
     s["name"] = c1.text_input(f"name_{i}", value=s["name"], key=f"sys_name_{i}")
@@ -123,8 +190,32 @@ for i, s in enumerate(st.session_state.systems):
     if c4.button("×", key=f"del_system_{i}"):
         del_row("system", i); st.rerun()
 
+st.markdown("---")
+
+# === Arrows ===
 st.subheader("Arrows")
-if st.button("add", key="add_arrow"): add_row("arrow")
+arr_top = st.columns([1,1,3,3,3])
+if arr_top[0].button("Add", key="add_arrow"): add_row("arrow")
+# Export
+arrows_csv = bytes_csv(st.session_state.arrows, headers=["from","to","text"])
+arr_top[1].download_button("Export CSV", arrows_csv, file_name="arrows.csv", mime="text/csv", use_container_width=True)
+# Import
+with arr_top[2]:
+    up_arrows = st.file_uploader("Arrows CSV Import", type=["csv"], key="up_arrows")
+with arr_top[3]:
+    if st.button("インポート（Arrows）", use_container_width=True):
+        if up_arrows:
+            rows = import_csv(up_arrows, ["from","to","text"])
+            if rows is not None:
+                st.session_state.arrows = [
+                    {"from": r.get("from",""), "to": r.get("to",""), "text": r.get("text","")}
+                    for r in rows
+                ]
+                st.success("Arrowsをインポートしました。"); st.rerun()
+        else:
+            st.warning("CSVファイルを選択してください。")
+
+# rows
 options = [*actor_names(), *system_names()]
 for i, e in enumerate(st.session_state.arrows):
     c1,c2,c3,c4 = st.columns([4,4,3,1])
@@ -137,18 +228,27 @@ for i, e in enumerate(st.session_state.arrows):
         del_row("arrow", i); st.rerun()
 
 st.markdown("---")
-c1, c2 = st.columns([1,1])
 
+# === Render & Clear ===
+c1, c2 = st.columns([1,1])
 with c1:
     if st.button("描画する", type="primary", use_container_width=True):
         dot = render_graph(rankdir, font, actor_color, system_color, system_header, data_bg, emph_bg, edge_color)
         st.graphviz_chart(dot.source, use_container_width=True)
+        # SVGはGraphvizバイナリが必要：Cloudで未導入ならDOTフォールバック
+        svg_bytes = None
         try:
             svg_bytes = dot.pipe(format="svg")
-            st.download_button("SVGをダウンロード", svg_bytes,
-                               file_name="system_map.svg", mime="image/svg+xml")
         except Exception:
-            pass
+            st.warning("SVG生成に失敗（Graphvizバイナリ未導入の可能性）。DOTソースのダウンロードを提供します。")
+        if svg_bytes:
+            st.download_button("SVGをダウンロード", svg_bytes,
+                               file_name="system_map.svg", mime="image/svg+xml", use_container_width=True)
+        else:
+            st.download_button("DOTソースをダウンロード",
+                               dot.source.encode("utf-8"),
+                               file_name="system_map.dot", mime="text/vnd.graphviz",
+                               use_container_width=True)
 
 with c2:
     if st.button("すべてクリア", use_container_width=True):
