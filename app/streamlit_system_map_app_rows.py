@@ -7,7 +7,7 @@ import io
 # 初期設定
 # =========================
 st.set_page_config(page_title="System Map Builder", layout="wide")
-st.title("System Map Builder（行ごとの入力 + 矢印のプルダウン + CSV I/O）")
+st.title("System Map Builder")
 
 # =========================
 # セッションステート初期化
@@ -184,7 +184,7 @@ ensure_state()
 # --- Actors ---
 st.subheader("Actors")
 cols = st.columns([1,1,3,3,3])
-if cols[0].button("+", key="add_actor", help="Actor を1行追加"):
+if cols[0].button("add", key="add_actor", help="Actor を1行追加"):
     add_row("actor")
 if cols[1].button("CSV出力", key="exp_actor"):
     download_csv(
@@ -215,7 +215,7 @@ st.divider()
 # --- Systems ---
 st.subheader("Systems")
 cols = st.columns([1,1,3,3,3])
-if cols[0].button("+", key="add_system", help="System を1行追加"):
+if cols[0].button("add", key="add_system", help="System を1行追加"):
     add_row("system")
 if cols[1].button("CSV出力", key="exp_system"):
     download_csv(
@@ -260,7 +260,7 @@ st.divider()
 # --- Arrows ---
 st.subheader("Arrows")
 cols = st.columns([1,1,3,3,3])
-if cols[0].button("+", key="add_arrow", help="Arrow を1行追加"):
+if cols[0].button("add", key="add_arrow", help="Arrow を1行追加"):
     add_row("arrow")
 if cols[1].button("CSV出力", key="exp_arrow"):
     download_csv(
