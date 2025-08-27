@@ -2,7 +2,7 @@ import streamlit as st
 from graphviz import Digraph
 
 st.set_page_config(page_title="System Map Builder", layout="wide")
-st.title("System Map Builder（行ごとの入力 + 矢印のプルダウン）")
+st.title("System Map Builder")
 
 # -------- Helpers --------
 def ensure_state():
@@ -111,9 +111,9 @@ for i, a in enumerate(st.session_state.actors):
     c1, c2 = st.columns([8,1])
     a["name"] = c1.text_input(f"Actor {i+1}", value=a["name"], key=f"actor_{i}")
     if c2.button("×", key=f"del_actor_{i}"):
-        del_row("actor", i); st.experimental_rerun()
+        del_row("actor", i); st.rerun()
 
-st.subheader("Systems")
+st.subheader("Systems (dataの頭に*/＊をつけると強調表示されます)")
 if st.button("add", key="add_system"): add_row("system")
 for i, s in enumerate(st.session_state.systems):
     c1, c2, c3, c4 = st.columns([4,4,4,1])
@@ -121,7 +121,7 @@ for i, s in enumerate(st.session_state.systems):
     s["description"] = c2.text_input(f"description_{i}", value=s["description"], key=f"sys_desc_{i}")
     s["data"] = c3.text_input(f"data_{i}", value=s["data"], key=f"sys_data_{i}")
     if c4.button("×", key=f"del_system_{i}"):
-        del_row("system", i); st.experimental_rerun()
+        del_row("system", i); st.rerun()
 
 st.subheader("Arrows")
 if st.button("add", key="add_arrow"): add_row("arrow")
@@ -134,7 +134,7 @@ for i, e in enumerate(st.session_state.arrows):
     e["to"] = c2.selectbox(f"to_{i}", options, index=options.index(cur_to) if cur_to in options else 0, key=f"arr_to_{i}")
     e["text"] = c3.text_input(f"text_{i}", value=e["text"], key=f"arr_text_{i}")
     if c4.button("×", key=f"del_arrow_{i}"):
-        del_row("arrow", i); st.experimental_rerun()
+        del_row("arrow", i); st.rerun()
 
 st.markdown("---")
 if st.button("描画する", type="primary"):
