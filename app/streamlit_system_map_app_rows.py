@@ -2,6 +2,7 @@ import streamlit as st
 from graphviz import Digraph
 import csv
 import io
+import hashlib
 
 # =========================
 # 初期設定
@@ -17,9 +18,9 @@ def ensure_state():
         st.session_state.actors = [{"name": "顧客"}, {"name": "営業担当"}]
     if "systems" not in st.session_state:
         st.session_state.systems = [
-            {"name": "顧客管理システム", "description": "顧客登録・問合せ対応", "data": "＊顧客ID, 氏名, 住所"},
-            {"name": "販売管理システム", "description": "受注・請求処理", "data": "＊注文ID, 顧客ID, 商品情報"},
-            {"name": "会計システム", "description": "売上計上・入金処理", "data": "＊仕訳ID, 請求金額"},
+            {"name": "顧客管理システム", "description": "顧客登録・問合せ対応", "data": "＊顧客ID, 氏名, 住所", "label": "営業系システム"},
+            {"name": "販売管理システム", "description": "受注・請求処理", "data": "＊注文ID, 顧客ID, 商品情報", "label": "営業系システム"},
+            {"name": "会計システム", "description": "売上計上・入金処理", "data": "＊仕訳ID, 請求金額", "label": "基幹"},
         ]
     if "arrows" not in st.session_state:
         st.session_state.arrows = [
@@ -33,7 +34,7 @@ def add_row(kind):
     if kind == "actor":
         st.session_state.actors.append({"name": ""})
     elif kind == "system":
-        st.session_state.systems.append({"name": "", "description": "", "data": ""})
+        st.session_state.systems.append({"name": "", "description": "", "data": "", "label": ""})
     elif kind == "arrow":
         opts = [*actor_names(), *system_names()]
         frm = opts[0] if opts else ""
@@ -58,7 +59,6 @@ def system_names():
 # CSV I/O ユーティリティ（堅牢化）
 # =========================
 def _norm(s: str) -> str:
-    """BOM除去・全角スペース→半角・strip・lower"""
     return (s or "").replace("\u3000", " ").strip().lstrip("\ufeff").lower()
 
 def _apply_aliases(cols, aliases):
@@ -69,14 +69,9 @@ def _apply_aliases(cols, aliases):
     return fixed
 
 def parse_csv_uploaded(file, required_cols, aliases=None, allow_extra=True):
-    """
-    CSVを寛容に読む（BOM/全角/大小・別名対応）
-    required_cols: 例 ["name"] or ["name","description","data"]
-    aliases: {"discription":"description","desc":"description","名前":"name"} など
-    """
     aliases = aliases or {}
     data = file.read()  # bytes
-    text = data.decode("utf-8-sig", errors="replace")  # Excel互換
+    text = data.decode("utf-8-sig", errors="replace")
     reader = csv.DictReader(io.StringIO(text))
 
     if reader.fieldnames is None:
@@ -102,7 +97,6 @@ def parse_csv_uploaded(file, required_cols, aliases=None, allow_extra=True):
     return rows, None
 
 def download_csv(filename: str, headers: list[str], rows: list[list[str]]):
-    """UTF-8-SIG でDL（ExcelでもOK）"""
     buf = io.StringIO()
     buf.write("\ufeff")  # BOM
     writer = csv.writer(buf, lineterminator="\n")
@@ -116,7 +110,7 @@ def download_csv(filename: str, headers: list[str], rows: list[list[str]]):
     )
 
 # =========================
-# 図の生成
+# 図の生成（ノードラベル）
 # =========================
 def build_system_label(sys, header_bg, data_bg, emph_bg):
     raw = sys.get("data", "").strip()
@@ -130,7 +124,7 @@ def build_system_label(sys, header_bg, data_bg, emph_bg):
         bg = emph_bg if emph else data_bg
         rows.append(f'<TR><TD BGCOLOR="{bg}">{label}</TD></TR>')
     rows_html = "\n".join(rows) if rows else f'<TR><TD BGCOLOR="{data_bg}">（項目なし）</TD></TR>'
-    return f"""<
+    return f"""< 
       <TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0">
         <TR><TD BGCOLOR="{header_bg}"><B>{sys.get("name","")}</B></TD></TR>
         <TR><TD>{sys.get("description","")}</TD></TR>
@@ -140,27 +134,76 @@ def build_system_label(sys, header_bg, data_bg, emph_bg):
       </TABLE>
     >"""
 
+# =========================
+# 図の生成（ラベル＝クラスタ）
+# =========================
+PALETTE = [
+    "#F6F9FF", "#FFF7E6", "#F6FFF6", "#FFF0F6", "#F0FFFF",
+    "#FFF5F5", "#F7F5FF", "#F5FFF9", "#FFFDF0", "#F0F8FF"
+]
+BORDER = "#999999"
+
+def color_for_label(label: str):
+    if not label:
+        return "#FFFFFF"
+    h = int(hashlib.md5(label.encode("utf-8")).hexdigest(), 16)
+    return PALETTE[h % len(PALETTE)]
+
 def render_graph(rankdir, font, actor_color, system_color, system_header, data_bg, emph_bg, edge_color):
     dot = Digraph(format="svg")
     dot.attr(rankdir=rankdir, fontname=font)
     dot.attr("node", fontname=font)
     dot.attr("edge", fontname=font, color=edge_color)
 
+    # 1) Actors はクラスタ外に通常ノードとして配置
     for a in st.session_state.actors:
         name = a["name"].strip()
         if name:
             dot.node(name, name, shape="ellipse", style="filled", fillcolor=actor_color)
 
+    # 2) Systems を label ごとにクラスタ化
+    groups = {}
+    unlabeled = []
     for s in st.session_state.systems:
-        name = s["name"].strip()
-        if name:
-            dot.node(name, build_system_label(s, system_header, data_bg, emph_bg),
-                     shape="plaintext", style="filled", fillcolor=system_color)
+        nm = s["name"].strip()
+        if not nm:
+            continue
+        lb = (s.get("label") or "").strip()
+        if lb:
+            groups.setdefault(lb, []).append(s)
+        else:
+            unlabeled.append(s)
 
+    # ラベル付きクラスタを作成
+    cluster_id = 0
+    for label, systems in groups.items():
+        with dot.subgraph(name=f"cluster_{cluster_id}") as c:
+            cluster_id += 1
+            c.attr(label=label, style="rounded,filled", color=BORDER, fillcolor=color_for_label(label))
+            # クラスタ内に各Systemノードを配置
+            for s in systems:
+                name = s["name"].strip()
+                c.node(
+                    name,
+                    build_system_label(s, system_header, data_bg, emph_bg),
+                    shape="plaintext", style="filled", fillcolor=system_color
+                )
+
+    # ラベルなしSystemはトップレベルに
+    for s in unlabeled:
+        name = s["name"].strip()
+        dot.node(
+            name,
+            build_system_label(s, system_header, data_bg, emph_bg),
+            shape="plaintext", style="filled", fillcolor=system_color
+        )
+
+    # 3) 矢印
     for e in st.session_state.arrows:
         frm, to, text = e["from"].strip(), e["to"].strip(), e["text"]
         if frm and to:
             dot.edge(frm, to, label=text)
+
     return dot
 
 # =========================
@@ -208,7 +251,7 @@ for i, a in enumerate(st.session_state.actors):
     a["name"] = c1.text_input(f"Actor {i+1}", value=a["name"], key=f"actor_{i}")
     if c2.button("×", key=f"del_actor_{i}", help="この行を削除"):
         del_row("actor", i)
-        st.experimental_rerun()
+        st.rerun()
 
 st.divider()
 
@@ -220,40 +263,47 @@ if cols[0].button("add", key="add_system", help="System を1行追加"):
 if cols[1].button("CSV出力", key="exp_system"):
     download_csv(
         "systems.csv",
-        headers=["name","description","data"],
-        rows=[[s["name"], s["description"], s["data"]] for s in st.session_state.systems]
+        headers=["name","description","data","label"],
+        rows=[[s.get("name",""), s.get("description",""), s.get("data",""), s.get("label","")] for s in st.session_state.systems]
     )
 imp_sys = cols[2].file_uploader("インポート（Systems）", type=["csv"], key="imp_system")
 if imp_sys is not None:
     rows, err = parse_csv_uploaded(
         imp_sys,
-        required_cols=["name","description","data"],
+        required_cols=["name","description","data","label"],
         aliases={
             "discription":"description", "desc":"description", "説明":"description",
-            "データ":"data", "項目":"data", "名前":"name"
+            "データ":"data", "項目":"data", "名前":"name", "ラベル":"label", "カテゴリ":"label", "カテゴリー":"label"
         }
     )
     if err:
         st.error(err)
     else:
         st.session_state.systems = [
-            {"name": r.get("name",""), "description": r.get("description",""), "data": r.get("data","")}
+            {
+                "name": r.get("name",""),
+                "description": r.get("description",""),
+                "data": r.get("data",""),
+                "label": r.get("label",""),
+            }
             for r in rows if r.get("name","").strip()
         ]
         st.success(f"{len(st.session_state.systems)} 件インポートしました")
 
-hdr = st.columns([4,4,4,1])
+hdr = st.columns([3,3,4,3,1])
 hdr[0].markdown("**name**")
 hdr[1].markdown("**description**")
 hdr[2].markdown("**data（カンマ区切り・先頭`*`/`＊`で強調）**")
+hdr[3].markdown("**label（同一ラベルはグループ化）**")
 for i, s in enumerate(st.session_state.systems):
-    c1, c2, c3, c4 = st.columns([4,4,4,1])
-    s["name"] = c1.text_input(f"name_{i}", value=s["name"], key=f"sys_name_{i}")
-    s["description"] = c2.text_input(f"description_{i}", value=s["description"], key=f"sys_desc_{i}")
-    s["data"] = c3.text_input(f"data_{i}", value=s["data"], key=f"sys_data_{i}")
-    if c4.button("×", key=f"del_system_{i}", help="この行を削除"):
+    c1, c2, c3, c4, c5 = st.columns([3,3,4,3,1])
+    s["name"] = c1.text_input(f"name_{i}", value=s.get("name",""), key=f"sys_name_{i}")
+    s["description"] = c2.text_input(f"description_{i}", value=s.get("description",""), key=f"sys_desc_{i}")
+    s["data"] = c3.text_input(f"data_{i}", value=s.get("data",""), key=f"sys_data_{i}")
+    s["label"] = c4.text_input(f"label_{i}", value=s.get("label",""), key=f"sys_label_{i}")
+    if c5.button("×", key=f"del_system_{i}", help="この行を削除"):
         del_row("system", i)
-        st.experimental_rerun()
+        st.rerun()
 
 st.divider()
 
@@ -298,7 +348,7 @@ for i, e in enumerate(st.session_state.arrows):
     e["text"] = c3.text_input(f"text_{i}", value=e["text"], key=f"arr_text_{i}")
     if c4.button("×", key=f"del_arrow_{i}", help="この行を削除"):
         del_row("arrow", i)
-        st.experimental_rerun()
+        st.rerun()
 
 st.markdown("---")
 
@@ -306,13 +356,17 @@ st.markdown("---")
 # 描画
 # =========================
 if st.button("描画する", type="primary"):
-    # 重複名チェック（ID衝突回避）
     names = actor_names() + system_names()
     if len(names) != len(set(names)):
         st.warning("Actor/System の名前が重複しています。ノードIDとして使うため、一意にしてください。")
     dot = render_graph(rankdir, font, actor_color, system_color, system_header, data_bg, emph_bg, edge_color)
     st.graphviz_chart(dot.source, use_container_width=True)
-    st.download_button("SVGをダウンロード", dot.pipe(format="svg"),
-                       file_name="system_map.svg", mime="image/svg+xml")
+    # CloudでSVG失敗に備えてtry/except
+    try:
+        st.download_button("SVGをダウンロード", dot.pipe(format="svg"),
+                           file_name="system_map.svg", mime="image/svg+xml")
+    except Exception:
+        st.download_button("DOTソースをダウンロード", dot.source.encode("utf-8"),
+                           file_name="system_map.dot", mime="text/vnd.graphviz")
 else:
     st.info("各行に入力し、「描画する」を押してください。")
